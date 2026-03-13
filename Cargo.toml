@@ -32,7 +32,7 @@ base64 = "0.22.1"
 indicatif = "0.18.4"
 tikv-jemallocator = {version ="0.6.1",optional = true,features = ["unprefixed_malloc_on_supported_platforms"] }
 tikv-jemalloc-ctl = {version ="0.6.1",optional = true }
-dom_query = "0.25.1"
+dom_query = "0.26.0"
 serde_yaml = "0.9"
 url = "2.5.8"
 arc-swap = "1.8.2"
