@@ -48,7 +48,7 @@ It also serves an OPDS feed, making it easy to download the generated EPUBs dire
 
 1.  Clone the repository:
     ```bash
-    git clone https://github.com/yourusername/rsspub.git
+    git clone https://github.com/harshit181/RSSPub.git
     cd rsspub
     ```
 
