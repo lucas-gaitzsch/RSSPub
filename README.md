@@ -103,6 +103,7 @@ You can configure the application to automatically send generated EPUBs via emai
 
 - **Gmail Configuration:** Tested with `smtp.gmail.com` on port `587`.
 - **App Password:** If using Gmail, you must use an **App Password** (your regular password will not work).
+- **SMTP Username:** Can be configured separately from the sender email address. If left empty, RSSPub falls back to the sender email address.
 - **Recommendation:** It is recommended to use a **temporary or dedicated email account** for this feature, rather than your primary personal account.
 
 ### Configuration
