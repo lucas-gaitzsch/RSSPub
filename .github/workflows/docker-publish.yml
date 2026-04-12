@@ -77,7 +77,7 @@ jobs:
           fi
 
           TIMESTAMP="$(date -u +'%Y%m%d-%H%M%S')"
-          echo "tag=ghcr.io/lucas-gaitzsch/rsspub:pr-$SANITIZED_BRANCH-$TIMESTAMP" >> "$GITHUB_OUTPUT"
+          echo "tag=ghcr.io/lucas-gaitzsch/rsspub:branch-$SANITIZED_BRANCH-$TIMESTAMP" >> "$GITHUB_OUTPUT"
             
       - name: Build and push branch image
         uses: docker/build-push-action@v5
