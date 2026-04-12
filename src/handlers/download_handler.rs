@@ -75,7 +75,7 @@ pub async fn generate_epub_adhoc(
         {
             Ok(filename) => {
                 info!("Background generation completed successfully: {}", filename);
-                match  email::check_and_send_email(db_clone, &filename).await {
+                match  email::check_and_send_email(db_clone, &filename, None).await {
                     Ok(_ok) => {}
                     Err(_error) => {}
                 }
@@ -139,4 +139,3 @@ async fn download_latest_by_prefix(prefix: &str) -> Result<Response, (StatusCode
         .unwrap()
         .into_response())
 }
-

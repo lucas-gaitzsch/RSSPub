@@ -48,7 +48,6 @@ pub fn migrate_position(conn: &Connection) -> Result<(), Error> {
 }
 
 pub fn migrate_feed_schedule(conn: &Connection) -> Result<(), Error> {
-
     let count_category_id: i32 = conn
         .query_row(
             "SELECT count(*) FROM pragma_table_info('schedules') WHERE name='category_id'",
@@ -58,11 +57,72 @@ pub fn migrate_feed_schedule(conn: &Connection) -> Result<(), Error> {
         .unwrap_or(0);
 
     if count_category_id == 0 {
+        conn.execute("ALTER TABLE schedules ADD COLUMN category_id INTEGER", [])?;
+    }
+
+    Ok(())
+}
+
+pub fn migrate_schedule_timezone(conn: &Connection) -> Result<(), Error> {
+    let count: i32 = conn
+        .query_row(
+            "SELECT count(*) FROM pragma_table_info('schedules') WHERE name='timezone'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+
+    if count == 0 {
         conn.execute(
-            "ALTER TABLE schedules ADD COLUMN category_id INTEGER",
+            "ALTER TABLE schedules ADD COLUMN timezone TEXT NOT NULL DEFAULT 'UTC'",
             [],
         )?;
     }
+
+    Ok(())
+}
+
+pub fn migrate_schedule_email_override(conn: &Connection) -> Result<(), Error> {
+    let count: i32 = conn
+        .query_row(
+            "SELECT count(*) FROM pragma_table_info('schedules') WHERE name='override_to_email'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+
+    if count == 0 {
+        conn.execute(
+            "ALTER TABLE schedules ADD COLUMN override_to_email TEXT",
+            [],
+        )?;
+    }
+
+    Ok(())
+}
+
+pub fn migrate_schedule_categories(conn: &Connection) -> Result<(), Error> {
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS schedule_category (
+            schedule_id INTEGER NOT NULL,
+            category_id INTEGER NOT NULL,
+            PRIMARY KEY (schedule_id, category_id),
+            FOREIGN KEY (schedule_id) REFERENCES schedules(id) ON DELETE CASCADE,
+            FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE CASCADE
+        )",
+        [],
+    )?;
+
+    conn.execute(
+        "INSERT OR IGNORE INTO schedule_category (schedule_id, category_id)
+         SELECT id, category_id FROM schedules WHERE category_id IS NOT NULL",
+        [],
+    )?;
+
+    conn.execute(
+        "UPDATE schedules SET category_id = NULL WHERE category_id IS NOT NULL",
+        [],
+    )?;
 
     Ok(())
 }

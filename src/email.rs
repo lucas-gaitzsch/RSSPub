@@ -102,7 +102,7 @@ pub async fn send_epub(config: &EmailConfig, epub_path: &Path) -> Result<()> {
     Ok(())
 }
 
-pub async fn check_and_send_email(db: Arc<Mutex<Connection>>, filename: &String) -> Result<()> {
+pub async fn check_and_send_email(db: Arc<Mutex<Connection>>, filename: &String, override_to_email: Option<&str>) -> Result<()> {
     let send_email = {
         let conn = db.lock().map_err(|_| anyhow::anyhow!("DB lock failed"))?;
         match db::get_email_config(&conn)? {
@@ -120,6 +120,10 @@ pub async fn check_and_send_email(db: Arc<Mutex<Connection>>, filename: &String)
         };
 
         if let Some(config) = config_opt {
+            let mut config = config;
+            if let Some(override_to_email) = override_to_email {
+                config.to_email = override_to_email.to_string();
+            }
             let epub_path = std::path::Path::new(crate::util::EPUB_OUTPUT_DIR).join(&filename);
             if let Err(e) = send_epub(&config, &epub_path).await {
                 error!("Failed to auto-send email: {}", e);

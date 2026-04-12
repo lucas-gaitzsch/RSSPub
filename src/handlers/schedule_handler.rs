@@ -4,6 +4,7 @@ use axum::Json;
 use axum::http::StatusCode;
 use chrono_tz::Tz;
 use chrono::{Local, Timelike, Datelike};
+use lettre::Address;
 use tracing::{info, warn};
 use crate::{db, scheduler};
 use crate::models::{AddScheduleRequest, AppState, ScheduleResponse};
@@ -34,7 +35,9 @@ pub async fn list_schedules(
                             active: s.active,
                             schedule_type: s.schedule_type,
                             cron_expression: s.cron_expression.clone(),
-                            category_id: s.category_id,
+                            timezone: s.timezone.clone(),
+                            category_ids: s.category_ids.clone(),
+                            override_to_email: s.override_to_email.clone(),
                         });
                         continue;
                     }
@@ -55,6 +58,74 @@ pub async fn add_schedule(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<AddScheduleRequest>,
 ) -> Result<StatusCode, (StatusCode, String)> {
+    let cron_expression = build_cron_expression(&payload)?;
+    let override_to_email = validate_override_email(payload.override_to_email)?;
+
+    info!(
+        "Converting {} {:02}:{:02} -> Cron {}",
+        payload.timezone, payload.hour, payload.minute, cron_expression
+    );
+
+    {
+        let db = state.db.lock().map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB lock failed".to_string(),
+            )
+        })?;
+        db::add_schedule(
+            &db,
+            &cron_expression,
+            &payload.schedule_type,
+            &payload.timezone,
+            &payload.category_ids,
+            override_to_email.as_deref(),
+        )
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
+
+    if let Some(value) = restart_schedule(state).await {
+        return value;
+    }
+
+    Ok(StatusCode::CREATED)
+}
+
+pub async fn update_schedule(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+    Json(payload): Json<AddScheduleRequest>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    let cron_expression = build_cron_expression(&payload)?;
+    let override_to_email = validate_override_email(payload.override_to_email)?;
+
+    {
+        let db = state.db.lock().map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DB lock failed".to_string(),
+            )
+        })?;
+        db::update_schedule(
+            &db,
+            id,
+            &cron_expression,
+            &payload.schedule_type,
+            &payload.timezone,
+            &payload.category_ids,
+            override_to_email.as_deref(),
+        )
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
+
+    if let Some(value) = restart_schedule(state).await {
+        return value;
+    }
+
+    Ok(StatusCode::OK)
+}
+
+fn build_cron_expression(payload: &AddScheduleRequest) -> Result<String, (StatusCode, String)> {
     let tz: Tz = payload
         .timezone
         .parse()
@@ -75,52 +146,76 @@ pub async fn add_schedule(
 
     let cron_expression = match payload.frequency.as_str() {
         "weekly" => {
-            let day = payload.day_of_week.ok_or((StatusCode::BAD_REQUEST, "Missing day of week".to_string()))?;
+            let day = payload
+                .day_of_week
+                .ok_or((StatusCode::BAD_REQUEST, "Missing day of week".to_string()))?;
             let mut current = target_time_in_tz;
-            let target_weekday = chrono::Weekday::try_from(day as u8).map_err(|_| (StatusCode::BAD_REQUEST, "Invalid day of week".to_string()))?;
+            let target_weekday = chrono::Weekday::try_from(day as u8)
+                .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid day of week".to_string()))?;
             while current.weekday() != target_weekday {
                 current = current + chrono::Duration::days(1);
             }
             let target_in_server = current.with_timezone(&Local);
-            format!("0 {} {} * * {}", target_in_server.minute(), target_in_server.hour(), target_in_server.weekday().num_days_from_sunday())
-        },
+            format!(
+                "0 {} {} * * {}",
+                target_in_server.minute(),
+                target_in_server.hour(),
+                target_in_server.weekday().num_days_from_sunday()
+            )
+        }
         "monthly" => {
-            let day = payload.day_of_month.ok_or((StatusCode::BAD_REQUEST, "Missing day of month".to_string()))?;
+            let day = payload
+                .day_of_month
+                .ok_or((StatusCode::BAD_REQUEST, "Missing day of month".to_string()))?;
             let current = target_time_in_tz;
-             let candidate = current.date_naive().with_day(day);
+            let candidate = current.date_naive().with_day(day);
             if candidate.is_none() {
-                 return Err((StatusCode::BAD_REQUEST, "Invalid day of month for current month".to_string()));
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    "Invalid day of month for current month".to_string(),
+                ));
             }
-            let dt = candidate.unwrap().and_time(current.time()).and_local_timezone(tz).unwrap();
+            let dt = candidate
+                .unwrap()
+                .and_time(current.time())
+                .and_local_timezone(tz)
+                .unwrap();
             let target_in_server = dt.with_timezone(&Local);
-            format!("0 {} {} {} * *", target_in_server.minute(), target_in_server.hour(), target_in_server.day())
-        },
+            format!(
+                "0 {} {} {} * *",
+                target_in_server.minute(),
+                target_in_server.hour(),
+                target_in_server.day()
+            )
+        }
         _ => {
-             format!("0 {} {} * * *", server_minute, server_hour)
+            format!("0 {} {} * * *", server_minute, server_hour)
         }
     };
 
-    info!(
-        "Converting {} {:02}:{:02} -> Server {:02}:{:02} (Cron: {})",
-        payload.timezone, payload.hour, payload.minute, server_hour, server_minute, cron_expression
-    );
+    Ok(cron_expression)
+}
 
-    {
-        let db = state.db.lock().map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "DB lock failed".to_string(),
-            )
-        })?;
-        db::add_schedule(&db, &cron_expression, &payload.schedule_type, payload.category_id)
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+fn validate_override_email(
+    override_to_email: Option<String>,
+) -> Result<Option<String>, (StatusCode, String)> {
+    match override_to_email {
+        Some(email) => {
+            let trimmed = email.trim();
+            if trimmed.is_empty() {
+                Ok(None)
+            } else {
+                trimmed.parse::<Address>().map_err(|_| {
+                    (
+                        StatusCode::BAD_REQUEST,
+                        "Invalid override email".to_string(),
+                    )
+                })?;
+                Ok(Some(trimmed.to_string()))
+            }
+        }
+        None => Ok(None),
     }
-
-    if let Some(value) = restart_schedule(state).await {
-        return value;
-    }
-
-    Ok(StatusCode::CREATED)
 }
 
 pub async fn delete_schedule(
@@ -145,7 +240,9 @@ pub async fn delete_schedule(
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn restart_schedule(state: Arc<AppState>) -> Option<Result<StatusCode, (StatusCode, String)>> {
+async fn restart_schedule(
+    state: Arc<AppState>,
+) -> Option<Result<StatusCode, (StatusCode, String)>> {
     {
         let mut sched = state.scheduler.lock().await;
         if let Err(e) = sched.shutdown().await {
