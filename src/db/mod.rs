@@ -17,11 +17,12 @@ pub fn add_schedule(
     timezone: &str,
     category_ids: &[i64],
     override_to_email: Option<&str>,
+    fetch_since_hours_override: Option<i32>,
 ) -> Result<()> {
     let tx = conn.unchecked_transaction()?;
     tx.execute(
-        "INSERT INTO schedules (cron_expression, active, schedule_type, timezone, override_to_email, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![cron_expression, true, schedule_type, timezone, override_to_email, Utc::now().to_rfc3339()],
+        "INSERT INTO schedules (cron_expression, active, schedule_type, timezone, override_to_email, fetch_since_hours_override, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![cron_expression, true, schedule_type, timezone, override_to_email, fetch_since_hours_override, Utc::now().to_rfc3339()],
     )?;
     let schedule_id = tx.last_insert_rowid();
     save_schedule_categories(&tx, schedule_id, category_ids)?;
@@ -31,7 +32,7 @@ pub fn add_schedule(
 
 pub fn get_schedules(conn: &Connection) -> Result<Vec<Schedule>> {
     let mut stmt = conn.prepare(
-        "SELECT id, cron_expression, active, schedule_type, timezone, override_to_email FROM schedules",
+        "SELECT id, cron_expression, active, schedule_type, timezone, override_to_email, fetch_since_hours_override FROM schedules",
     )?;
     let schedule_iter = stmt.query_map([], |row| {
         let id: i64 = row.get(0)?;
@@ -43,6 +44,7 @@ pub fn get_schedules(conn: &Connection) -> Result<Vec<Schedule>> {
             timezone: row.get(4)?,
             category_ids: get_schedule_category_ids(conn, id)?,
             override_to_email: row.get(5)?,
+            fetch_since_hours_override: row.get(6)?,
         })
     })?;
 
@@ -61,11 +63,12 @@ pub fn update_schedule(
     timezone: &str,
     category_ids: &[i64],
     override_to_email: Option<&str>,
+    fetch_since_hours_override: Option<i32>,
 ) -> Result<()> {
     let tx = conn.unchecked_transaction()?;
     tx.execute(
-        "UPDATE schedules SET cron_expression = ?1, schedule_type = ?2, timezone = ?3, override_to_email = ?4, category_id = NULL WHERE id = ?5",
-        params![cron_expression, schedule_type, timezone, override_to_email, id],
+        "UPDATE schedules SET cron_expression = ?1, schedule_type = ?2, timezone = ?3, override_to_email = ?4, fetch_since_hours_override = ?5, category_id = NULL WHERE id = ?6",
+        params![cron_expression, schedule_type, timezone, override_to_email, fetch_since_hours_override, id],
     )?;
     save_schedule_categories(&tx, id, category_ids)?;
     tx.commit()?;

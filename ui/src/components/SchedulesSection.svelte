@@ -2,27 +2,17 @@
     import { onMount } from "svelte";
     import { api } from "../lib/api";
     import { schedules, categories, isAuthenticated, popup } from "../lib/store";
-
-    type ScheduleDraft = {
-        hour: string;
-        minute: string;
-        scheduleType: string;
-        frequency: string;
-        dayOfWeek: string;
-        dayOfMonth: string;
-        timezone: string;
-        categoryIds: string[];
-        overrideToEmail: string;
-    };
-
-    let createDraft = emptyDraft();
-    let editingId: number | null = null;
-    let editDraft = emptyDraft();
+    import type { Schedule, ScheduleDraft, ScheduleFrequency, ScheduleType } from "../lib/types";
+    import ScheduleForm from "./ScheduleForm.svelte";
 
     const hours = Array.from({ length: 24 }, (_, i) => i.toString().padStart(2, "0"));
     const minutes = Array.from({ length: 12 }, (_, i) => (i * 5).toString().padStart(2, "0"));
     const timezones = Intl.supportedValuesOf("timeZone");
     const localTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+    let createDraft = emptyDraft();
+    let editingId: number | null = null;
+    let editDraft = emptyDraft();
 
     const daysOfWeek = [
         { val: "0", label: "Monday" },
@@ -57,19 +47,36 @@
             timezone: timezones.includes(localTimezone) ? localTimezone : "UTC",
             categoryIds: [],
             overrideToEmail: "",
+            fetchSinceHoursOverride: "",
         };
     }
 
     async function loadSchedules() {
         try {
-            const data = await api("/schedules");
+            const data = await api("/schedules") as Schedule[] | null;
             if (data) schedules.set(data);
         } catch (e) {
             console.error(e);
         }
     }
 
+    function normalizeOptionalText(value: string | number | null | undefined): string {
+        if (value == null) return "";
+        return String(value).trim();
+    }
+
+    function normalizeScheduleType(value: string): ScheduleType {
+        return value === "read_it_later" ? "read_it_later" : "rss";
+    }
+
+    function inferDraftFrequency(parts: string[]): ScheduleFrequency {
+        if (parts[3] !== "*" && parts[5] === "*") return "monthly";
+        if (parts[3] === "*" && parts[5] !== "*") return "weekly";
+        return "daily";
+    }
+
     function toPayload(draft: ScheduleDraft) {
+        const trimmedFetchSinceHoursOverride = normalizeOptionalText(draft.fetchSinceHoursOverride);
         const payload: any = {
             hour: parseInt(draft.hour, 10),
             minute: parseInt(draft.minute, 10),
@@ -81,6 +88,10 @@
                     ? draft.categoryIds.map((id) => parseInt(id, 10)).filter((id) => !Number.isNaN(id))
                     : [],
             override_to_email: draft.overrideToEmail.trim() || null,
+            fetch_since_hours_override:
+                draft.scheduleType === "rss" && trimmedFetchSinceHoursOverride
+                    ? parseInt(trimmedFetchSinceHoursOverride, 10)
+                    : null,
         };
 
         if (draft.frequency === "weekly") {
@@ -97,7 +108,31 @@
             popup.set({
                 visible: true,
                 title: "Missing Information",
-                message: "Please select time, timezone, and type.",
+                message: "Please select a time, timezone, and schedule type.",
+                isError: true,
+            });
+            return false;
+        }
+
+        const trimmedFetchSinceHoursOverride = normalizeOptionalText(draft.fetchSinceHoursOverride);
+        if (draft.scheduleType === "rss" && trimmedFetchSinceHoursOverride) {
+            const value = Number(trimmedFetchSinceHoursOverride);
+            if (!Number.isInteger(value) || value <= 0) {
+                popup.set({
+                    visible: true,
+                    title: "Invalid Fetch Window",
+                    message: "Fetch window override must be a positive whole number.",
+                    isError: true,
+                });
+                return false;
+            }
+        }
+
+        if (!draft.timezone) {
+            popup.set({
+                visible: true,
+                title: "Invalid Timezone",
+                message: "Please select a valid timezone.",
                 isError: true,
             });
             return false;
@@ -123,7 +158,7 @@
         }
     }
 
-    function startEdit(schedule: any) {
+    function startEdit(schedule: Schedule) {
         editingId = schedule.id;
         editDraft = draftFromSchedule(schedule);
     }
@@ -150,17 +185,17 @@
         }
     }
 
-    function draftFromSchedule(schedule: any): ScheduleDraft {
+    function draftFromSchedule(schedule: Schedule): ScheduleDraft {
         const date = schedule.time ? new Date(schedule.time) : null;
         const parts = (schedule.cron_expression || "").split(" ");
-        const frequency = inferFrequency(parts);
-        const timezone = timezones.includes(schedule.timezone) ? schedule.timezone : "UTC";
+        const frequency = inferDraftFrequency(parts);
+        const timezone = schedule.timezone || "UTC";
         const zonedDateParts = date ? getDatePartsInTimezone(date, timezone) : null;
 
         return {
             hour: zonedDateParts?.hour || parts[2]?.padStart(2, "0") || "",
             minute: zonedDateParts?.minute || parts[1]?.padStart(2, "0") || "",
-            scheduleType: schedule.schedule_type || "rss",
+            scheduleType: normalizeScheduleType(schedule.schedule_type || "rss"),
             frequency,
             dayOfWeek:
                 frequency === "weekly"
@@ -171,15 +206,10 @@
                     ? dayOfMonthFromSchedule(zonedDateParts, parts)
                     : "1",
             timezone,
-            categoryIds: (schedule.category_ids || []).map((id: number) => String(id)),
+            categoryIds: schedule.category_ids.map((id) => String(id)),
             overrideToEmail: schedule.override_to_email || "",
+            fetchSinceHoursOverride: schedule.fetch_since_hours_override ?? "",
         };
-    }
-
-    function inferFrequency(parts: string[]) {
-        if (parts[3] !== "*" && parts[5] === "*") return "monthly";
-        if (parts[3] === "*" && parts[5] !== "*") return "weekly";
-        return "daily";
     }
 
     function getDatePartsInTimezone(date: Date, timezone: string) {
@@ -258,7 +288,7 @@
         });
     }
 
-    function formatCron(schedule: any) {
+    function formatCron(schedule: Schedule) {
         const cron = schedule.cron_expression;
         if (!cron) return "Unknown";
 
@@ -295,7 +325,7 @@
     }
 
     function categoryNames(categoryIds: number[]) {
-        if (!categoryIds?.length) return ["Alle Kategorien"];
+        if (!categoryIds?.length) return ["All categories"];
         return categoryIds.map((id) => ($categories.find((c) => c.id === id) || {}).name || String(id));
     }
 </script>
@@ -311,101 +341,41 @@
             <li class="schedule-item">
                 {#if editingId === schedule.id}
                     <div class="schedule-edit">
-                        <div class="form-grid">
-                            <div class="input-group frequency-group">
-                                <select bind:value={editDraft.frequency} class="modern-select" aria-label="Frequency">
-                                    <option value="daily">Daily</option>
-                                    <option value="weekly">Weekly</option>
-                                    <option value="monthly">Monthly</option>
-                                </select>
-                                {#if editDraft.frequency === "weekly"}
-                                    <select bind:value={editDraft.dayOfWeek} class="modern-select" aria-label="Day of Week">
-                                        {#each daysOfWeek as d}
-                                            <option value={d.val}>{d.label}</option>
-                                        {/each}
-                                    </select>
-                                {/if}
-                                {#if editDraft.frequency === "monthly"}
-                                    <select bind:value={editDraft.dayOfMonth} class="modern-select" aria-label="Day of Month">
-                                        {#each daysOfMonth as d}
-                                            <option value={d}>{d}</option>
-                                        {/each}
-                                    </select>
-                                {/if}
-                            </div>
-
-                            <div class="input-group time-group">
-                                <select bind:value={editDraft.hour} required class="modern-select time-select">
-                                    <option value="" disabled>HH</option>
-                                    {#each hours as h}
-                                        <option value={h}>{h}</option>
-                                    {/each}
-                                </select>
-                                <span class="time-separator">:</span>
-                                <select bind:value={editDraft.minute} required class="modern-select time-select">
-                                    <option value="" disabled>MM</option>
-                                    {#each minutes as m}
-                                        <option value={m}>{m}</option>
-                                    {/each}
-                                </select>
-                            </div>
-
-                            <select bind:value={editDraft.timezone} class="modern-select timezone-select">
-                                {#each timezones as tz}
-                                    <option value={tz}>{tz}</option>
-                                {/each}
-                            </select>
-
-                            <select bind:value={editDraft.scheduleType} class="modern-select type-select">
-                                <option value="rss">RSS Generator</option>
-                                <option value="read_it_later">Read It Later</option>
-                            </select>
-
-                            <input
-                                bind:value={editDraft.overrideToEmail}
-                                type="email"
-                                class="modern-select"
-                                placeholder="Empfaenger-Email (optional)"
-                            />
-                        </div>
-
-                        {#if editDraft.scheduleType === "rss"}
-                            <div class="category-picker">
-                                <div class="category-picker-label">Kategorien</div>
-                                <div class="category-options">
-                                    {#each $categories as cat (cat.id)}
-                                        <label class="category-option">
-                                            <input type="checkbox" bind:group={editDraft.categoryIds} value={String(cat.id)} />
-                                            <span>{cat.name}</span>
-                                        </label>
-                                    {/each}
-                                </div>
-                                {#if editDraft.categoryIds.length === 0}
-                                    <div class="selection-hint">Keine Auswahl bedeutet: Alle Kategorien</div>
-                                {/if}
-                            </div>
-                        {/if}
-
-                        <div class="edit-actions">
-                            <button type="button" class="add-btn-modern" on:click={() => saveEdit(schedule.id)}>Speichern</button>
-                            <button type="button" class="secondary-btn" on:click={cancelEdit}>Abbrechen</button>
-                        </div>
+                        <ScheduleForm
+                            draft={editDraft}
+                            categories={$categories}
+                            {hours}
+                            {minutes}
+                            {timezones}
+                            {daysOfWeek}
+                            {daysOfMonth}
+                            submitLabel="Save"
+                            showCancel={true}
+                            fetchWindowId={"edit-fetch-window-" + schedule.id}
+                            on:submit={() => saveEdit(schedule.id)}
+                            on:cancel={cancelEdit}
+                        />
                     </div>
                 {:else}
                     <div class="schedule-info">
                         <span class="schedule-time">{formatCron(schedule)}</span>
-                        <span class="schedule-type-badge">{schedule.schedule_type || "rss"}</span>
-                        {#if (schedule.schedule_type || "rss") === "rss"}
-                            {#each categoryNames(schedule.category_ids || []) as categoryName}
-                                <span class="schedule-category-badge">{categoryName}</span>
-                            {/each}
-                        {/if}
-                        {#if schedule.override_to_email}
-                            <span class="schedule-email-badge">{schedule.override_to_email}</span>
-                        {/if}
+                        <div class="schedule-meta-row">
+                            <span class="schedule-type-badge">{schedule.schedule_type || "rss"}</span>
+                            {#if (schedule.schedule_type || "rss") === "rss"}
+                                {#each categoryNames(schedule.category_ids || []) as categoryName}
+                                    <span class="schedule-category-badge">{categoryName}</span>
+                                {/each}
+                                {#if schedule.fetch_since_hours_override != null}
+                                    <span class="schedule-fetch-badge">{schedule.fetch_since_hours_override}h window</span>
+                                {/if}
+                            {/if}
+                            {#if schedule.override_to_email}
+                                <span class="schedule-email-badge">{schedule.override_to_email}</span>
+                            {/if}
+                        </div>
                     </div>
                     <div class="schedule-actions">
-                        <button on:click={() => startEdit(schedule)} class="secondary-btn">Bearbeiten</button>
+                        <button on:click={() => startEdit(schedule)} class="secondary-btn">Edit</button>
                         <button on:click={() => deleteSchedule(schedule.id)} class="delete-btn">×</button>
                     </div>
                 {/if}
@@ -413,154 +383,99 @@
         {/each}
     </ul>
 
-    <form on:submit|preventDefault={addSchedule} id="add-schedule-form" class="modern-form">
-        <div class="form-grid">
-            <div class="input-group frequency-group">
-                <select bind:value={createDraft.frequency} class="modern-select" aria-label="Frequency">
-                    <option value="daily">Daily</option>
-                    <option value="weekly">Weekly</option>
-                    <option value="monthly">Monthly</option>
-                </select>
-                {#if createDraft.frequency === "weekly"}
-                    <select bind:value={createDraft.dayOfWeek} class="modern-select" aria-label="Day of Week">
-                        {#each daysOfWeek as d}
-                            <option value={d.val}>{d.label}</option>
-                        {/each}
-                    </select>
-                {/if}
-                {#if createDraft.frequency === "monthly"}
-                    <select bind:value={createDraft.dayOfMonth} class="modern-select" aria-label="Day of Month">
-                        {#each daysOfMonth as d}
-                            <option value={d}>{d}</option>
-                        {/each}
-                    </select>
-                {/if}
-            </div>
-
-            <div class="input-group time-group">
-                <select bind:value={createDraft.hour} required class="modern-select time-select">
-                    <option value="" disabled>HH</option>
-                    {#each hours as h}
-                        <option value={h}>{h}</option>
-                    {/each}
-                </select>
-                <span class="time-separator">:</span>
-                <select bind:value={createDraft.minute} required class="modern-select time-select">
-                    <option value="" disabled>MM</option>
-                    {#each minutes as m}
-                        <option value={m}>{m}</option>
-                    {/each}
-                </select>
-            </div>
-
-            <select bind:value={createDraft.timezone} id="timezone-select" required class="modern-select timezone-select">
-                {#each timezones as tz}
-                    <option value={tz}>{tz}</option>
-                {/each}
-            </select>
-
-            <select bind:value={createDraft.scheduleType} required class="modern-select type-select">
-                <option value="rss">RSS Generator</option>
-                <option value="read_it_later">Read It Later</option>
-            </select>
-
-            <input
-                bind:value={createDraft.overrideToEmail}
-                type="email"
-                class="modern-select"
-                placeholder="Empfaenger-Email (optional)"
-            />
-
-            <button type="submit" class="add-btn-modern">Add Schedule</button>
-        </div>
-
-        {#if createDraft.scheduleType === "rss"}
-            <div class="category-picker">
-                <div class="category-picker-label">Kategorien</div>
-                <div class="category-options">
-                    {#each $categories as cat (cat.id)}
-                        <label class="category-option">
-                            <input type="checkbox" bind:group={createDraft.categoryIds} value={String(cat.id)} />
-                            <span>{cat.name}</span>
-                        </label>
-                    {/each}
-                </div>
-                {#if createDraft.categoryIds.length === 0}
-                    <div class="selection-hint">Keine Auswahl bedeutet: Alle Kategorien</div>
-                {/if}
-            </div>
-        {/if}
-    </form>
+    <div id="add-schedule-form" class="modern-form">
+        <ScheduleForm
+            draft={createDraft}
+            categories={$categories}
+            {hours}
+            {minutes}
+            {timezones}
+            {daysOfWeek}
+            {daysOfMonth}
+            submitLabel="Add Schedule"
+            fetchWindowId="create-fetch-window"
+            on:submit={addSchedule}
+        />
+    </div>
 </section>
 
 <style>
     .schedule-item {
         display: flex;
         justify-content: space-between;
-        gap: 1rem;
-        align-items: flex-start;
+        gap: 1.25rem;
+        align-items: center;
     }
 
     .schedule-info,
     .schedule-actions,
-    .edit-actions,
     .schedule-edit {
         display: flex;
-        gap: 0.5rem;
+        gap: 0.75rem;
         align-items: center;
         flex-wrap: wrap;
+    }
+
+    .schedule-info {
+        flex: 1;
+        min-width: 0;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.6rem;
+    }
+
+    .schedule-time {
+        font-size: 1.05rem;
+        line-height: 1.3;
+    }
+
+    .schedule-meta-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.45rem;
+        align-items: center;
+    }
+
+    .schedule-actions {
+        flex-shrink: 0;
+        align-self: flex-start;
     }
 
     .schedule-edit {
         width: 100%;
         flex-direction: column;
         align-items: stretch;
+        gap: 1rem;
     }
 
     .schedule-category-badge,
-    .schedule-email-badge {
+    .schedule-fetch-badge,
+    .schedule-email-badge,
+    .schedule-type-badge {
         font-size: 0.8rem;
         color: #fff;
-        padding: 2px 6px;
-        border-radius: 4px;
+        padding: 0.28rem 0.6rem;
+        border-radius: 999px;
+        line-height: 1;
     }
 
     .schedule-category-badge {
         background: #607d8b;
     }
 
+    .schedule-type-badge {
+        background: rgba(255, 255, 255, 0.08);
+        color: rgba(255, 255, 255, 0.8);
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+    }
+
     .schedule-email-badge {
         background: #7b5cff;
     }
 
-    .category-picker {
-        display: grid;
-        gap: 0.5rem;
-    }
-
-    .category-picker-label {
-        font-size: 0.9rem;
-        font-weight: 600;
-    }
-
-    .category-options {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.5rem;
-    }
-
-    .category-option {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.35rem;
-        padding: 0.35rem 0.6rem;
-        border: 1px solid rgba(255, 255, 255, 0.15);
-        border-radius: 999px;
-    }
-
-    .selection-hint {
-        font-size: 0.85rem;
-        opacity: 0.8;
+    .schedule-fetch-badge {
+        background: #2f855a;
     }
 
     .secondary-btn {
@@ -575,11 +490,13 @@
     @media (max-width: 700px) {
         .schedule-item {
             flex-direction: column;
+            align-items: stretch;
         }
 
         .schedule-actions {
             width: 100%;
             justify-content: flex-end;
+            align-self: auto;
         }
     }
 </style>

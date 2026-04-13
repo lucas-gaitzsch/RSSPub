@@ -25,7 +25,8 @@ pub fn init_db(path: &str) -> rusqlite::Result<Connection> {
             timezone TEXT NOT NULL DEFAULT 'UTC',
             created_at TEXT NOT NULL,
             category_id INTEGER,
-            override_to_email TEXT
+            override_to_email TEXT,
+            fetch_since_hours_override INTEGER
         )",
         [],
     )?;
@@ -137,6 +138,7 @@ pub fn init_db(path: &str) -> rusqlite::Result<Connection> {
     migration::migrate_feed_schedule(&conn)?;
     migration::migrate_schedule_timezone(&conn)?;
     migration::migrate_schedule_email_override(&conn)?;
+    migration::migrate_schedule_fetch_since_hours_override(&conn)?;
     migration::migrate_schedule_categories(&conn)?;
     migration::migrate_general_config_cover_date(&conn)?;
     migration::migrate_email_config_smtp_username(&conn)?;

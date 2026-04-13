@@ -62,6 +62,8 @@ pub struct Schedule {
     pub category_ids: Vec<i64>,
     #[serde(default)]
     pub override_to_email: Option<String>,
+    #[serde(default)]
+    pub fetch_since_hours_override: Option<i32>,
 }
 
 fn default_schedule_type() -> String {
@@ -130,12 +132,14 @@ pub struct ScheduleResponse {
     pub timezone: String,
     pub category_ids: Vec<i64>,
     pub override_to_email: Option<String>,
+    pub fetch_since_hours_override: Option<i32>,
 }
 
 #[derive(Deserialize)]
 pub struct AddScheduleRequest {
     pub hour: u32,
     pub minute: u32,
+    #[serde(default = "default_timezone")]
     pub timezone: String,
     #[serde(default = "default_schedule_type")]
     pub schedule_type: String,
@@ -147,6 +151,8 @@ pub struct AddScheduleRequest {
     pub category_ids: Vec<i64>,
     #[serde(default)]
     pub override_to_email: Option<String>,
+    #[serde(default)]
+    pub fetch_since_hours_override: Option<i32>,
 }
 
 fn default_frequency() -> String {

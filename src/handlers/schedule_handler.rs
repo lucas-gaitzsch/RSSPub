@@ -38,6 +38,7 @@ pub async fn list_schedules(
                             timezone: s.timezone.clone(),
                             category_ids: s.category_ids.clone(),
                             override_to_email: s.override_to_email.clone(),
+                            fetch_since_hours_override: s.fetch_since_hours_override,
                         });
                         continue;
                     }
@@ -60,6 +61,10 @@ pub async fn add_schedule(
 ) -> Result<StatusCode, (StatusCode, String)> {
     let cron_expression = build_cron_expression(&payload)?;
     let override_to_email = validate_override_email(payload.override_to_email)?;
+    let fetch_since_hours_override = validate_fetch_since_hours_override(
+        &payload.schedule_type,
+        payload.fetch_since_hours_override,
+    )?;
 
     info!(
         "Converting {} {:02}:{:02} -> Cron {}",
@@ -80,6 +85,7 @@ pub async fn add_schedule(
             &payload.timezone,
             &payload.category_ids,
             override_to_email.as_deref(),
+            fetch_since_hours_override,
         )
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
@@ -98,6 +104,10 @@ pub async fn update_schedule(
 ) -> Result<StatusCode, (StatusCode, String)> {
     let cron_expression = build_cron_expression(&payload)?;
     let override_to_email = validate_override_email(payload.override_to_email)?;
+    let fetch_since_hours_override = validate_fetch_since_hours_override(
+        &payload.schedule_type,
+        payload.fetch_since_hours_override,
+    )?;
 
     {
         let db = state.db.lock().map_err(|_| {
@@ -114,6 +124,7 @@ pub async fn update_schedule(
             &payload.timezone,
             &payload.category_ids,
             override_to_email.as_deref(),
+            fetch_since_hours_override,
         )
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
@@ -194,6 +205,23 @@ fn build_cron_expression(payload: &AddScheduleRequest) -> Result<String, (Status
     };
 
     Ok(cron_expression)
+}
+
+fn validate_fetch_since_hours_override(
+    schedule_type: &str,
+    fetch_since_hours_override: Option<i32>,
+) -> Result<Option<i32>, (StatusCode, String)> {
+    match fetch_since_hours_override {
+        Some(value) if value <= 0 => Err((
+            StatusCode::BAD_REQUEST,
+            "fetch_since_hours_override must be greater than 0".to_string(),
+        )),
+        Some(_) if schedule_type != "rss" => Err((
+            StatusCode::BAD_REQUEST,
+            "fetch_since_hours_override is only supported for rss schedules".to_string(),
+        )),
+        value => Ok(value),
+    }
 }
 
 fn validate_override_email(

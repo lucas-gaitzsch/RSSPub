@@ -1,6 +1,7 @@
 <script lang="ts">
     import { api } from "../lib/api";
     import { emailConfig, isAuthenticated, popup } from "../lib/store";
+    import type { EmailConfig } from "../lib/types";
 
     let smtp_host = "";
     let smtp_port: number | null = null;
@@ -20,7 +21,7 @@
 
     async function loadEmailConfig() {
         try {
-            const config = await api("/email-config");
+            const config = await api("/email-config") as EmailConfig | null;
             if (config) {
                 emailConfig.set(config);
                 smtp_host = config.smtp_host || "";

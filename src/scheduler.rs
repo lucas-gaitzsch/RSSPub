@@ -38,6 +38,7 @@ pub async fn init_scheduler(db_conn: Arc<Mutex<Connection>>) -> Result<JobSchedu
             let job_type = schedule.schedule_type.clone();
             let category_ids = schedule.category_ids.clone();
             let override_to_email = schedule.override_to_email.clone();
+            let fetch_since_hours_override = schedule.fetch_since_hours_override;
             info!("Adding schedule: {}", schedule.cron_expression);
 
             match Job::new_async(schedule.cron_expression.as_str(), move |_uuid, _l| {
@@ -48,8 +49,12 @@ pub async fn init_scheduler(db_conn: Arc<Mutex<Connection>>) -> Result<JobSchedu
                 Box::pin(async move {
                     info!("Running scheduled generation for type: {}", job_type);
                     if job_type == RSS {
-                        if let Err(e) =
-                            run_scheduled_generation(db, category_ids, override_to_email).await
+                        if let Err(e) = run_scheduled_generation(
+                            db,
+                            category_ids,
+                            override_to_email,
+                            fetch_since_hours_override,
+                        ).await
                         {
                             error!("Scheduled generation (RSS) failed: {}", e);
                         }
@@ -81,6 +86,7 @@ async fn run_scheduled_generation(
     db: Arc<Mutex<Connection>>,
     category_ids: Vec<i64>,
     override_to_email: Option<String>,
+    fetch_since_hours_override: Option<i32>,
 ) -> Result<()> {
     let feeds = {
         let conn = db.lock().map_err(|_| anyhow::anyhow!("DB lock failed"))?;
@@ -109,7 +115,12 @@ async fn run_scheduled_generation(
         return Ok(());
     }
 
-    let filename = processor::generate_and_save(feeds, &db, crate::util::EPUB_OUTPUT_DIR).await?;
+    let filename = processor::generate_and_save(
+        feeds,
+        &db,
+        crate::util::EPUB_OUTPUT_DIR,
+        fetch_since_hours_override,
+    ).await?;
     info!("Scheduled generation completed: {}", filename);
     email::check_and_send_email(db, &filename, override_to_email.as_deref()).await?;
 

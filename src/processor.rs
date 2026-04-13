@@ -15,6 +15,7 @@ pub async fn generate_epub(
     feeds: Vec<Feed>,
     _db: &Arc<Mutex<Connection>>,
     output_path: &str,
+    fetch_since_hours_override: Option<i32>,
 ) -> Result<()> {
     info!("Fetching {} feeds...", feeds.len());
 
@@ -23,7 +24,8 @@ pub async fn generate_epub(
     let (since, image_timeout) = {
         let conn = _db.lock().map_err(|_| anyhow::anyhow!("DB lock failed"))?;
         let config = crate::db::get_general_config(&conn)?;
-        (Utc::now() - ChronoDuration::hours(config.fetch_since_hours as i64), config.image_timeout_seconds)
+        let fetch_since_hours = fetch_since_hours_override.unwrap_or(config.fetch_since_hours);
+        (Utc::now() - ChronoDuration::hours(fetch_since_hours as i64), config.image_timeout_seconds)
     };
     info!("Filtering items since: {}", since);
     let articles = feed::filter_items(fetched_feeds, errors, since).await;
@@ -76,11 +78,12 @@ pub async fn generate_and_save(
     feeds: Vec<Feed>,
     db: &Arc<Mutex<Connection>>,
     output_dir: &str,
+    fetch_since_hours_override: Option<i32>,
 ) -> Result<String> {
     let filename = format!("rss_digest_{}.epub", Utc::now().format("%Y%m%d_%H%M%S"));
     let filepath = format!("{}/{}", output_dir, filename);
 
-    generate_epub(feeds, db, &filepath).await?;
+    generate_epub(feeds, db, &filepath, fetch_since_hours_override).await?;
     Ok(filename)
 }
 

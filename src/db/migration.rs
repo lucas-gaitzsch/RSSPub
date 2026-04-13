@@ -101,6 +101,25 @@ pub fn migrate_schedule_email_override(conn: &Connection) -> Result<(), Error> {
     Ok(())
 }
 
+pub fn migrate_schedule_fetch_since_hours_override(conn: &Connection) -> Result<(), Error> {
+    let count: i32 = conn
+        .query_row(
+            "SELECT count(*) FROM pragma_table_info('schedules') WHERE name='fetch_since_hours_override'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+
+    if count == 0 {
+        conn.execute(
+            "ALTER TABLE schedules ADD COLUMN fetch_since_hours_override INTEGER",
+            [],
+        )?;
+    }
+
+    Ok(())
+}
+
 pub fn migrate_schedule_categories(conn: &Connection) -> Result<(), Error> {
     conn.execute(
         "CREATE TABLE IF NOT EXISTS schedule_category (
