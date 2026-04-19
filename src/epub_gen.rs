@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use crate::models::epub_message::EpubPart;
 use crate::feed::{Article, ArticleSource};
 use crate::image::process_images;
@@ -279,6 +279,8 @@ pub async fn generate_epub_data<W: Write + Seek + Send + 'static>(
         .map_err(|_| anyhow::anyhow!("Failed to send Source TOC"))?;
     }
 
+    let (prev_links, next_links) = generate_prev_next_links(articles, &mut articles_by_source, &sources, &mut article_filenames);
+
     let mut join_set = JoinSet::new();
     for (i, article) in articles.iter().enumerate() {
         let article = article.clone();
@@ -292,6 +294,8 @@ pub async fn generate_epub_data<W: Write + Seek + Send + 'static>(
             .replace(|c: char| !c.is_alphanumeric(), "_")
             .to_lowercase();
         let back_link = format!("toc_{}.xhtml", source_slug);
+        let prev_link = prev_links.get(&i).cloned();
+        let next_link = next_links.get(&i).cloned();
         let tx_m = tx_m.clone();
         let counter_ref = Arc::clone(&counter);
         join_set.spawn(async move {
@@ -307,6 +311,8 @@ pub async fn generate_epub_data<W: Write + Seek + Send + 'static>(
                 content: &fixed_content,
                 original_link: &article.link,
                 back_link,
+                prev_link,
+                next_link,
             };
             let content_html = article_template.render().unwrap_or_else(|e| {
                 format!("<p>Failed to render article: {}</p>", e)
@@ -348,6 +354,26 @@ pub async fn generate_epub_data<W: Write + Seek + Send + 'static>(
 
     info!("EPUB generated successfully");
     Ok(())
+}
+
+fn generate_prev_next_links(articles: &[Article], articles_by_source: &mut HashMap<String, Vec<&Article>>, sources: &Vec<String>, article_filenames:  &HashMap<usize, String>) -> (HashMap<usize, String>, HashMap<usize, String>) {
+    let mut prev_links: HashMap<usize, String> = HashMap::new();
+    let mut next_links: HashMap<usize, String> = HashMap::new();
+    for source in sources {
+        let source_articles = &articles_by_source[source];
+        let indices: Vec<usize> = source_articles.iter().map(|a| {
+            articles.iter().position(|x| std::ptr::eq(x, *a)).unwrap()
+        }).collect();
+        for (pos, &idx) in indices.iter().enumerate() {
+            if pos > 0 {
+                prev_links.insert(idx, article_filenames[&indices[pos - 1]].clone());
+            }
+            if pos + 1 < indices.len() {
+                next_links.insert(idx, article_filenames[&indices[pos + 1]].clone());
+            }
+        }
+    }
+    (prev_links, next_links)
 }
 
 #[cfg(test)]
