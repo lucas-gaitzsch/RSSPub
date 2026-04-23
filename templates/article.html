@@ -1,7 +1,19 @@
 <h1>{{ title }}</h1>
 <p><strong>Source:</strong> {{ source }} <br /> <strong>Date:</strong> {{ pub_date }}</p>
-<p><a href="{{ back_link }}">Back to Feed TOC</a></p>
+<table width="100%" style="border-collapse:collapse;">
+<tr>
+<td style="text-align:left;width:33%;">{% if let Some(prev) = prev_link %}<a href="{{ prev }}">&lt; Prev</a>{% endif %}</td>
+<td style="text-align:center;width:34%;"><a href="{{ back_link }}">Back to Feed TOC</a></td>
+<td style="text-align:right;width:33%;">{% if let Some(next) = next_link %}<a href="{{ next }}">Next &gt;</a>{% endif %}</td>
+</tr>
+</table>
 <hr />
 {{ content|safe }}
 <p><a href="{{ original_link }}">Read original article</a></p>
-<p><a href="{{ back_link }}">Back to Feed TOC</a></p>
+<table width="100%" style="border-collapse:collapse;">
+<tr>
+<td style="text-align:left;width:33%;">{% if let Some(prev) = prev_link %}<a href="{{ prev }}">&lt; Prev</a>{% endif %}</td>
+<td style="text-align:center;width:34%;"><a href="{{ back_link }}">Back to Feed TOC</a></td>
+<td style="text-align:right;width:33%;">{% if let Some(next) = next_link %}<a href="{{ next }}">Next &gt;</a>{% endif %}</td>
+</tr>
+</table>
