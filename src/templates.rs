@@ -57,4 +57,6 @@ pub struct ArticleTemplate<'a> {
     pub content: &'a str,
     pub original_link: &'a str,
     pub back_link: String,
+    pub prev_link: Option<String>,
+    pub next_link: Option<String>,
 }
