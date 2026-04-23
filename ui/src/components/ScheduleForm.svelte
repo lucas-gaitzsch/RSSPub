@@ -85,10 +85,13 @@
         <input
             bind:value={draft.overrideToEmail}
             type="email"
+            multiple
             class="modern-select"
-            placeholder="Recipient email, optional"
+            placeholder="Recipient email(s), optional"
         />
     </div>
+
+    <div class="selection-hint">Multiple recipients can be separated with commas.</div>
 
     {#if draft.scheduleType === "rss"}
         <div class="schedule-details-grid">

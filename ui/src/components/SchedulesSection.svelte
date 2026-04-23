@@ -65,6 +65,14 @@
         return String(value).trim();
     }
 
+    function normalizeRecipientList(value: string): string {
+        return value
+            .split(",")
+            .map((e) => e.trim())
+            .filter((e) => e)
+            .join(", ");
+    }
+
     function normalizeScheduleType(value: string): ScheduleType {
         return value === "read_it_later" ? "read_it_later" : "rss";
     }
@@ -87,7 +95,7 @@
                 draft.scheduleType === "rss"
                     ? draft.categoryIds.map((id) => parseInt(id, 10)).filter((id) => !Number.isNaN(id))
                     : [],
-            override_to_email: draft.overrideToEmail.trim() || null,
+            override_to_email: normalizeRecipientList(draft.overrideToEmail) || null,
             fetch_since_hours_override:
                 draft.scheduleType === "rss" && trimmedFetchSinceHoursOverride
                     ? parseInt(trimmedFetchSinceHoursOverride, 10)
