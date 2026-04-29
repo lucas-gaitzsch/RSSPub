@@ -5,7 +5,7 @@ use lettre::message::{Attachment, MultiPart, SinglePart};
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::AsyncSmtpTransport;
 use lettre::Tokio1Executor;
-use lettre::{AsyncTransport, Message};
+use lettre::{Address, AsyncTransport, Message};
 use std::env;
 use std::fs;
 use std::path::Path;
@@ -16,21 +16,52 @@ use rusqlite::Connection;
 use crate::db;
 use uuid::Uuid;
 
+pub fn parse_recipient_list(value: &str, field_name: &str) -> Result<Vec<Address>> {
+    let recipients = value
+        .split(',')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .map(|entry| entry.parse::<Address>())
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .with_context(|| format!("Invalid '{}' email", field_name))?;
+
+    if recipients.is_empty() {
+        anyhow::bail!("Missing '{}' email", field_name);
+    }
+
+    Ok(recipients)
+}
+
+pub fn normalize_recipient_list(value: &str, field_name: &str) -> Result<String> {
+    let recipients = parse_recipient_list(value, field_name)?;
+    Ok(recipients
+        .into_iter()
+        .map(|address| address.to_string())
+        .collect::<Vec<_>>()
+        .join(", "))
+}
+
 fn build_epub_message(config: &EmailConfig, filename: &str, filebody: Vec<u8>) -> Result<Message> {
     let content_type = ContentType::parse("application/epub+zip").unwrap();
     let attachment = Attachment::new(String::from(filename)).body(filebody, content_type);
 
-    Message::builder()
+    let from_address = config
+        .email_address
+        .parse()
+        .context("Invalid 'from' email")?;
+    let to_addresses = parse_recipient_list(&config.to_email, "to")?;
+
+    let mut builder = Message::builder()
         .date_now()
         .message_id(None)
         .user_agent(format!("RSSPub/{}", env!("CARGO_PKG_VERSION")))
-        .from(
-            config
-                .email_address
-                .parse()
-                .context("Invalid 'from' email")?,
-        )
-        .to(config.to_email.parse().context("Invalid 'to' email")?)
+        .from(from_address);
+
+    for address in to_addresses {
+        builder = builder.to(address.into());
+    }
+
+    builder
         .subject(format!("RSS Digest: {}", filename))
         .multipart(
             MultiPart::mixed()
@@ -123,7 +154,11 @@ pub async fn send_epub(config: &EmailConfig, epub_path: &Path) -> Result<()> {
     Ok(())
 }
 
-pub async fn check_and_send_email(db: Arc<Mutex<Connection>>, filename: &String, override_to_email: Option<&str>) -> Result<()> {
+pub async fn check_and_send_email(
+    db: Arc<Mutex<Connection>>,
+    filename: &String,
+    override_to_email: Option<&str>,
+) -> Result<()> {
     let send_email = {
         let conn = db.lock().map_err(|_| anyhow::anyhow!("DB lock failed"))?;
         match db::get_email_config(&conn)? {
@@ -158,7 +193,7 @@ pub async fn check_and_send_email(db: Arc<Mutex<Connection>>, filename: &String,
 
 #[cfg(test)]
 mod tests {
-    use super::build_epub_message;
+    use super::{build_epub_message, normalize_recipient_list};
     use crate::models::EmailConfig;
 
     fn test_email_config() -> EmailConfig {
@@ -184,7 +219,10 @@ mod tests {
 
         let raw = String::from_utf8(email.formatted()).expect("message should serialize as utf-8");
 
-        assert!(raw.contains("Date:"), "raw message should include Date header");
+        assert!(
+            raw.contains("Date:"),
+            "raw message should include Date header"
+        );
         assert!(
             raw.contains("Message-ID:"),
             "raw message should include Message-ID header"
@@ -209,5 +247,27 @@ mod tests {
             raw.contains("application/epub+zip"),
             "raw message should include EPUB content type"
         );
+    }
+
+    #[test]
+    fn serializes_multiple_recipient_headers() {
+        let mut config = test_email_config();
+        config.to_email = "kindle@example.com, backup@example.com".to_string();
+
+        let email = build_epub_message(&config, "digest.epub", b"dummy epub bytes".to_vec())
+            .expect("message should build");
+
+        let raw = String::from_utf8(email.formatted()).expect("message should serialize as utf-8");
+
+        assert!(raw.contains("To: kindle@example.com, backup@example.com"));
+    }
+
+    #[test]
+    fn normalizes_recipient_lists() {
+        let normalized =
+            normalize_recipient_list(" kindle@example.com , , backup@example.com ", "to")
+                .expect("recipient list should normalize");
+
+        assert_eq!(normalized, "kindle@example.com, backup@example.com");
     }
 }

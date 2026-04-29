@@ -4,9 +4,8 @@ use axum::Json;
 use axum::http::StatusCode;
 use chrono_tz::Tz;
 use chrono::{Local, Timelike, Datelike};
-use lettre::Address;
 use tracing::{info, warn};
-use crate::{db, scheduler};
+use crate::{db, email, scheduler};
 use crate::models::{AddScheduleRequest, AppState, ScheduleResponse};
 
 pub async fn list_schedules(
@@ -233,13 +232,14 @@ fn validate_override_email(
             if trimmed.is_empty() {
                 Ok(None)
             } else {
-                trimmed.parse::<Address>().map_err(|_| {
-                    (
-                        StatusCode::BAD_REQUEST,
-                        "Invalid override email".to_string(),
-                    )
-                })?;
-                Ok(Some(trimmed.to_string()))
+                email::normalize_recipient_list(trimmed, "override")
+                    .map(Some)
+                    .map_err(|_| {
+                        (
+                            StatusCode::BAD_REQUEST,
+                            "Invalid override email list".to_string(),
+                        )
+                    })
             }
         }
         None => Ok(None),
