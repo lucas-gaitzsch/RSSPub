@@ -86,8 +86,8 @@
             bind:value={draft.overrideToEmail}
             type="email"
             multiple
-            class="modern-select"
-            placeholder="Recipient email(s) (optional)"
+            class="modern-select email-input"
+            placeholder="Recipient email(s) [optional]"
         />
     </div>
 
@@ -119,7 +119,7 @@
                     min="1"
                     step="1"
                     class="modern-select"
-                    placeholder="Hours (optional)"
+                    placeholder="Hours [optional]"
                 />
             </div>
         </div>
@@ -142,6 +142,10 @@
     .schedule-form-grid {
         align-items: end;
         gap: 0.85rem;
+    }
+
+    .email-input {
+        grid-column: span 2;
     }
 
     .schedule-details-grid {
@@ -226,6 +230,10 @@
     }
 
     @media (max-width: 700px) {
+        .email-input {
+            grid-column: 1 / -1;
+        }
+
         .schedule-details-grid {
             grid-template-columns: 1fr;
         }
