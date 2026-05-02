@@ -1,4 +1,5 @@
 import { writable } from "svelte/store";
+import type { Category, EmailConfig, Schedule } from "./types";
 
 export const authHeader = writable<string | null>(
   localStorage.getItem("rsspub_auth"),
@@ -18,10 +19,10 @@ authHeader.subscribe((value) => {
 });
 
 export const feeds = writable<any[]>([]);
-export const categories = writable<any[]>([]);
-export const schedules = writable<any[]>([]);
+export const categories = writable<Category[]>([]);
+export const schedules = writable<Schedule[]>([]);
 export const downloads = writable<string[]>([]);
-export const emailConfig = writable<any>(null);
+export const emailConfig = writable<EmailConfig | null>(null);
 
 export const isLoginVisible = writable<boolean>(false);
 export const popup = writable<{

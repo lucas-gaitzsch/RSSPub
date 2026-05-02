@@ -13,3 +13,4 @@ vncmain.sh
 /static/ebo.svg
 /static/icons
 .env
+.vite

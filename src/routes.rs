@@ -50,7 +50,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/schedules",
             get(schedule_handler::list_schedules).post(schedule_handler::add_schedule),
         )
-        .route("/schedules/{id}", delete(schedule_handler::delete_schedule))
+        .route("/schedules/{id}", delete(schedule_handler::delete_schedule).put(schedule_handler::update_schedule))
         .route("/downloads", get(download_handler::list_downloads))
         .route("/cover", post(handlers::upload_cover))
         .route(

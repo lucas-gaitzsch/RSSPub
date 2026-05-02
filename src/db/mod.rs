@@ -1,30 +1,50 @@
 use chrono::Utc;
-use rusqlite::{params, Connection, Result};
+use rusqlite::{Connection, Result, Transaction, params};
 
-use crate::models::{DomainOverride, EmailConfig, GeneralConfig, ProcessorType, ReadItLaterArticle, Schedule};
+use crate::models::{
+    DomainOverride, EmailConfig, GeneralConfig, ProcessorType, ReadItLaterArticle, Schedule,
+};
 
-pub mod schema_init;
-mod migration;
 pub mod category_db;
 pub mod feed_db;
+mod migration;
+pub mod schema_init;
 
-pub fn add_schedule(conn: &Connection, cron_expression: &str, schedule_type: &str, category_id: Option<i64>) -> Result<()> {
-    conn.execute(
-        "INSERT INTO schedules (cron_expression, active, schedule_type, category_id, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![cron_expression, true, schedule_type, category_id, Utc::now().to_rfc3339()],
+pub fn add_schedule(
+    conn: &Connection,
+    cron_expression: &str,
+    schedule_type: &str,
+    timezone: &str,
+    category_ids: &[i64],
+    override_to_email: Option<&str>,
+    fetch_since_hours_override: Option<i32>,
+) -> Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        "INSERT INTO schedules (cron_expression, active, schedule_type, timezone, override_to_email, fetch_since_hours_override, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![cron_expression, true, schedule_type, timezone, override_to_email, fetch_since_hours_override, Utc::now().to_rfc3339()],
     )?;
+    let schedule_id = tx.last_insert_rowid();
+    save_schedule_categories(&tx, schedule_id, category_ids)?;
+    tx.commit()?;
     Ok(())
 }
 
 pub fn get_schedules(conn: &Connection) -> Result<Vec<Schedule>> {
-    let mut stmt = conn.prepare("SELECT id, cron_expression, active, schedule_type, category_id FROM schedules")?;
+    let mut stmt = conn.prepare(
+        "SELECT id, cron_expression, active, schedule_type, timezone, override_to_email, fetch_since_hours_override FROM schedules",
+    )?;
     let schedule_iter = stmt.query_map([], |row| {
+        let id: i64 = row.get(0)?;
         Ok(Schedule {
-            id: Some(row.get(0)?),
+            id: Some(id),
             cron_expression: row.get(1)?,
             active: row.get(2)?,
             schedule_type: row.get(3)?,
-            category_id: row.get(4)?,
+            timezone: row.get(4)?,
+            category_ids: get_schedule_category_ids(conn, id)?,
+            override_to_email: row.get(5)?,
+            fetch_since_hours_override: row.get(6)?,
         })
     })?;
 
@@ -35,8 +55,64 @@ pub fn get_schedules(conn: &Connection) -> Result<Vec<Schedule>> {
     Ok(schedules)
 }
 
+pub fn update_schedule(
+    conn: &Connection,
+    id: i64,
+    cron_expression: &str,
+    schedule_type: &str,
+    timezone: &str,
+    category_ids: &[i64],
+    override_to_email: Option<&str>,
+    fetch_since_hours_override: Option<i32>,
+) -> Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        "UPDATE schedules SET cron_expression = ?1, schedule_type = ?2, timezone = ?3, override_to_email = ?4, fetch_since_hours_override = ?5, category_id = NULL WHERE id = ?6",
+        params![cron_expression, schedule_type, timezone, override_to_email, fetch_since_hours_override, id],
+    )?;
+    save_schedule_categories(&tx, id, category_ids)?;
+    tx.commit()?;
+    Ok(())
+}
+
 pub fn delete_schedule(conn: &Connection, id: i64) -> Result<()> {
+    conn.execute(
+        "DELETE FROM schedule_category WHERE schedule_id = ?1",
+        params![id],
+    )?;
     conn.execute("DELETE FROM schedules WHERE id = ?1", params![id])?;
+    Ok(())
+}
+
+fn get_schedule_category_ids(conn: &Connection, schedule_id: i64) -> Result<Vec<i64>> {
+    let mut stmt = conn.prepare(
+        "SELECT category_id FROM schedule_category WHERE schedule_id = ?1 ORDER BY category_id ASC",
+    )?;
+    let rows = stmt.query_map(params![schedule_id], |row| row.get(0))?;
+
+    let mut category_ids = Vec::new();
+    for row in rows {
+        category_ids.push(row?);
+    }
+    Ok(category_ids)
+}
+
+fn save_schedule_categories(
+    tx: &Transaction<'_>,
+    schedule_id: i64,
+    category_ids: &[i64],
+) -> Result<()> {
+    tx.execute(
+        "DELETE FROM schedule_category WHERE schedule_id = ?1",
+        params![schedule_id],
+    )?;
+
+    let mut stmt =
+        tx.prepare("INSERT INTO schedule_category (schedule_id, category_id) VALUES (?1, ?2)")?;
+    for category_id in category_ids {
+        stmt.execute(params![schedule_id, category_id])?;
+    }
+
     Ok(())
 }
 
@@ -139,7 +215,7 @@ pub fn mark_articles_as_read(conn: &Connection, ids: &[i64]) -> Result<()> {
     for id in ids {
         stmt.execute(params![id])?;
     }
-    
+
     Ok(())
 }
 
@@ -173,7 +249,6 @@ pub fn update_general_config(conn: &Connection, config: &GeneralConfig) -> Resul
     )?;
     Ok(())
 }
-
 
 pub fn add_domain_override(
     conn: &Connection,
@@ -227,7 +302,8 @@ mod tests {
                 cover_date_color TEXT NOT NULL DEFAULT 'white'
             )",
             [],
-        ).unwrap();
+        )
+        .unwrap();
     }
 
     #[test]
