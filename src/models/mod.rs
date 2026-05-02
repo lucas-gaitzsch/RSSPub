@@ -56,11 +56,22 @@ pub struct Schedule {
     pub active: bool,
     #[serde(default = "default_schedule_type")]
     pub schedule_type: String,
-    pub category_id: Option<i64>,
+    #[serde(default = "default_timezone")]
+    pub timezone: String,
+    #[serde(default)]
+    pub category_ids: Vec<i64>,
+    #[serde(default)]
+    pub override_to_email: Option<String>,
+    #[serde(default)]
+    pub fetch_since_hours_override: Option<i32>,
 }
 
 fn default_schedule_type() -> String {
     "rss".to_string()
+}
+
+fn default_timezone() -> String {
+    "UTC".to_string()
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -111,7 +122,6 @@ pub struct FeedPosition {
     pub position: i64,
 }
 
-
 #[derive(Serialize)]
 pub struct ScheduleResponse {
     pub id: i64,
@@ -119,13 +129,17 @@ pub struct ScheduleResponse {
     pub active: bool,
     pub schedule_type: String,
     pub cron_expression: String,
-    pub category_id: Option<i64>,
+    pub timezone: String,
+    pub category_ids: Vec<i64>,
+    pub override_to_email: Option<String>,
+    pub fetch_since_hours_override: Option<i32>,
 }
 
 #[derive(Deserialize)]
 pub struct AddScheduleRequest {
     pub hour: u32,
     pub minute: u32,
+    #[serde(default = "default_timezone")]
     pub timezone: String,
     #[serde(default = "default_schedule_type")]
     pub schedule_type: String,
@@ -133,7 +147,12 @@ pub struct AddScheduleRequest {
     pub frequency: String,
     pub day_of_week: Option<u32>,
     pub day_of_month: Option<u32>,
-    pub category_id: Option<i64>,
+    #[serde(default)]
+    pub category_ids: Vec<i64>,
+    #[serde(default)]
+    pub override_to_email: Option<String>,
+    #[serde(default)]
+    pub fetch_since_hours_override: Option<i32>,
 }
 
 fn default_frequency() -> String {
@@ -200,7 +219,7 @@ impl ProcessorType {
             _ => ProcessorType::Default,
         }
     }
-    
+
     pub fn to_i32(self) -> i32 {
         self as i32
     }

@@ -141,7 +141,7 @@ pub async fn deliver_read_it_later(
                     }
                 }
 
-                match email::check_and_send_email(db_clone, &filename).await {
+                match email::check_and_send_email(db_clone, &filename, None).await {
                     Ok(_ok) => {}
                     Err(_error) => {}
                 }
