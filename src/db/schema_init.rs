@@ -22,8 +22,11 @@ pub fn init_db(path: &str) -> rusqlite::Result<Connection> {
             cron_expression TEXT NOT NULL,
             active BOOLEAN NOT NULL DEFAULT 1,
             schedule_type TEXT NOT NULL DEFAULT 'rss',
+            timezone TEXT NOT NULL DEFAULT 'UTC',
             created_at TEXT NOT NULL,
-            category_id INTEGER
+            category_id INTEGER,
+            override_to_email TEXT,
+            fetch_since_hours_override INTEGER
         )",
         [],
     )?;
@@ -59,6 +62,17 @@ pub fn init_db(path: &str) -> rusqlite::Result<Connection> {
             feed_id INTEGER NOT NULL PRIMARY KEY,
             category_id INTEGER NOT NULL,
             FOREIGN KEY (feed_id) REFERENCES feeds(id) ON DELETE CASCADE,
+            FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE CASCADE
+        )",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS schedule_category (
+            schedule_id INTEGER NOT NULL,
+            category_id INTEGER NOT NULL,
+            PRIMARY KEY (schedule_id, category_id),
+            FOREIGN KEY (schedule_id) REFERENCES schedules(id) ON DELETE CASCADE,
             FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE CASCADE
         )",
         [],
@@ -122,6 +136,10 @@ pub fn init_db(path: &str) -> rusqlite::Result<Connection> {
     migration::migrate_constraint(&conn)?;
     migration::migrate_position(&conn)?;
     migration::migrate_feed_schedule(&conn)?;
+    migration::migrate_schedule_timezone(&conn)?;
+    migration::migrate_schedule_email_override(&conn)?;
+    migration::migrate_schedule_fetch_since_hours_override(&conn)?;
+    migration::migrate_schedule_categories(&conn)?;
     migration::migrate_general_config_cover_date(&conn)?;
     migration::migrate_email_config_smtp_username(&conn)?;
     Ok(conn)

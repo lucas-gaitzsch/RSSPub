@@ -71,11 +71,11 @@ pub async fn generate_epub_adhoc(
 
     tokio::spawn(async move {
         info!("Starting background EPUB generation...");
-        match processor::generate_and_save(feeds_to_fetch, &db_clone, util::EPUB_OUTPUT_DIR).await
+        match processor::generate_and_save(feeds_to_fetch, &db_clone, util::EPUB_OUTPUT_DIR, None).await
         {
             Ok(filename) => {
                 info!("Background generation completed successfully: {}", filename);
-                match  email::check_and_send_email(db_clone, &filename).await {
+                match  email::check_and_send_email(db_clone, &filename, None).await {
                     Ok(_ok) => {}
                     Err(_error) => {}
                 }
@@ -139,4 +139,3 @@ async fn download_latest_by_prefix(prefix: &str) -> Result<Response, (StatusCode
         .unwrap()
         .into_response())
 }
-

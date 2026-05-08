@@ -1,6 +1,7 @@
 use crate::{db, email, processor};
 use anyhow::Result;
 use rusqlite::Connection;
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -34,26 +35,36 @@ pub async fn init_scheduler(db_conn: Arc<Mutex<Connection>>) -> Result<JobSchedu
     for schedule in schedules {
         if schedule.active {
             let db_clone = db_conn.clone();
+            let job_type = schedule.schedule_type.clone();
+            let category_ids = schedule.category_ids.clone();
+            let override_to_email = schedule.override_to_email.clone();
+            let fetch_since_hours_override = schedule.fetch_since_hours_override;
             info!("Adding schedule: {}", schedule.cron_expression);
 
             match Job::new_async(schedule.cron_expression.as_str(), move |_uuid, _l| {
                 let db = db_clone.clone();
-                let job_type = schedule.schedule_type.clone();
+                let job_type = job_type.clone();
+                let category_ids = category_ids.clone();
+                let override_to_email = override_to_email.clone();
                 Box::pin(async move {
                     info!("Running scheduled generation for type: {}", job_type);
                     if job_type == RSS {
-                    let category = schedule.category_id.clone();
-                        if let Err(e) = run_scheduled_generation(db,category).await {
-                             error!("Scheduled generation (RSS) failed: {}", e);
+                        if let Err(e) = run_scheduled_generation(
+                            db,
+                            category_ids,
+                            override_to_email,
+                            fetch_since_hours_override,
+                        ).await
+                        {
+                            error!("Scheduled generation (RSS) failed: {}", e);
                         }
                     } else if job_type == READ_IT_LATER {
-                         if let Err(e) = run_read_it_later_generation(db).await {
-                             error!("Scheduled generation (Read It Later) failed: {}", e);
-                         }
+                        if let Err(e) = run_read_it_later_generation(db, override_to_email).await {
+                            error!("Scheduled generation (Read It Later) failed: {}", e);
+                        }
                     } else {
                         error!("Unknown schedule type: {}", job_type);
                     }
-
                 })
             }) {
                 Ok(job) => {
@@ -71,14 +82,32 @@ pub async fn init_scheduler(db_conn: Arc<Mutex<Connection>>) -> Result<JobSchedu
     Ok(sched)
 }
 
-async fn run_scheduled_generation(db: Arc<Mutex<Connection>>,category_id: Option<i64>) -> Result<()> {
+async fn run_scheduled_generation(
+    db: Arc<Mutex<Connection>>,
+    category_ids: Vec<i64>,
+    override_to_email: Option<String>,
+    fetch_since_hours_override: Option<i32>,
+) -> Result<()> {
     let feeds = {
         let conn = db.lock().map_err(|_| anyhow::anyhow!("DB lock failed"))?;
-        let stored_feeds = match category_id {
-            Some(id) => feed_db::get_feeds_by_category(&conn, id)?,
-            None => feed_db::get_feeds(&conn)?,
-        };
-        stored_feeds
+        if category_ids.is_empty() {
+            feed_db::get_feeds(&conn)?
+        } else {
+            let mut deduped_feeds = Vec::new();
+            let mut seen_feed_ids = HashSet::new();
+
+            for category_id in category_ids {
+                for feed in feed_db::get_feeds_by_category(&conn, category_id)? {
+                    let feed_id = feed.id.unwrap_or_default();
+                    if seen_feed_ids.insert(feed_id) {
+                        deduped_feeds.push(feed);
+                    }
+                }
+            }
+
+            deduped_feeds.sort_by_key(|feed| feed.position);
+            deduped_feeds
+        }
     };
 
     if feeds.is_empty() {
@@ -86,21 +115,28 @@ async fn run_scheduled_generation(db: Arc<Mutex<Connection>>,category_id: Option
         return Ok(());
     }
 
-    let filename = processor::generate_and_save(feeds, &db, crate::util::EPUB_OUTPUT_DIR).await?;
+    let filename = processor::generate_and_save(
+        feeds,
+        &db,
+        crate::util::EPUB_OUTPUT_DIR,
+        fetch_since_hours_override,
+    ).await?;
     info!("Scheduled generation completed: {}", filename);
-    email::check_and_send_email(db, &filename).await?;
+    email::check_and_send_email(db, &filename, override_to_email.as_deref()).await?;
 
     Ok(())
 }
 
-async fn run_read_it_later_generation(db: Arc<Mutex<Connection>>) -> Result<()> {
+async fn run_read_it_later_generation(
+    db: Arc<Mutex<Connection>>,
+    override_to_email: Option<String>,
+) -> Result<()> {
     let (articles, image_timeout) = {
-         let conn = db.lock().map_err(|_| anyhow::anyhow!("DB lock failed"))?;
-         let articles = db::get_read_it_later_articles(&conn, true)?;
-         let config = db::get_general_config(&conn)?;
+        let conn = db.lock().map_err(|_| anyhow::anyhow!("DB lock failed"))?;
+        let articles = db::get_read_it_later_articles(&conn, true)?;
+        let config = db::get_general_config(&conn)?;
 
-         
-         (articles, config.image_timeout_seconds)
+        (articles, config.image_timeout_seconds)
     };
 
     if articles.is_empty() {
@@ -109,9 +145,13 @@ async fn run_read_it_later_generation(db: Arc<Mutex<Connection>>) -> Result<()> 
     }
     let article_ids: Vec<i64> = articles.iter().filter_map(|a| a.id).collect();
 
-    let filename = processor::generate_read_it_later_epub(articles, crate::util::EPUB_OUTPUT_DIR, image_timeout).await?;
+    let filename = processor::generate_read_it_later_epub(
+        articles,
+        crate::util::EPUB_OUTPUT_DIR,
+        image_timeout,
+    )
+    .await?;
     info!("Read It Later generation completed: {}", filename);
-
 
     if !article_ids.is_empty() {
         match db.lock() {
@@ -126,7 +166,7 @@ async fn run_read_it_later_generation(db: Arc<Mutex<Connection>>) -> Result<()> 
         }
     }
 
-    email::check_and_send_email(db, &filename).await?;
+    email::check_and_send_email(db, &filename, override_to_email.as_deref()).await?;
     Ok(())
 }
 

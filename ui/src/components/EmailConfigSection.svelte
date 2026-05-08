@@ -1,6 +1,7 @@
 <script lang="ts">
     import { api } from "../lib/api";
     import { emailConfig, isAuthenticated, popup } from "../lib/store";
+    import type { EmailConfig } from "../lib/types";
 
     let smtp_host = "";
     let smtp_port: number | null = null;
@@ -14,13 +15,21 @@
     let statusColor = "";
     let isSaving = false;
 
+    function normalizeRecipientList(value: string): string {
+        return value
+            .split(",")
+            .map((e) => e.trim())
+            .filter((e) => e)
+            .join(", ");
+    }
+
     $: if ($isAuthenticated) {
         loadEmailConfig();
     }
 
     async function loadEmailConfig() {
         try {
-            const config = await api("/email-config");
+            const config = await api("/email-config") as EmailConfig | null;
             if (config) {
                 emailConfig.set(config);
                 smtp_host = config.smtp_host || "";
@@ -44,6 +53,8 @@
         isSaving = true;
         statusMsg = "Saving...";
         statusColor = "var(--text-secondary)";
+
+        to_email = normalizeRecipientList(to_email);
 
         try {
             await api("/email-config", "POST", {
@@ -156,9 +167,13 @@
                 <input
                     type="email"
                     bind:value={to_email}
-                    placeholder="To Email (Kindle)"
+                    placeholder="To Email(s), comma separated"
+                    multiple
                     required
                 />
+            </div>
+            <div style="margin: 0 0 15px; font-size: 0.85rem; color: var(--text-secondary);">
+                Multiple recipients can be separated with commas.
             </div>
             <button
                 type="submit"
